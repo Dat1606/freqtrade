@@ -1,5 +1,5 @@
 """
-Minimum age (days listed) pair list filter
+Minimum and maximum age (days listed) pair list filter
 """
 import logging
 from copy import deepcopy
@@ -35,6 +35,15 @@ class AgeFilter(IPairList):
                                        "exchange max request size "
                                        f"({exchange.ohlcv_candle_limit})")
 
+        self._max_days_listed = pairlistconfig.get('max_days_listed', 30)
+
+        if self._max_days_listed < 1:
+            raise OperationalException("AgeFilter requires max_days_listed to be >= 1")
+        if self._max_days_listed > exchange.ohlcv_candle_limit:
+            raise OperationalException("AgeFilter requires max_days_listed to not exceed "
+                                       "exchange max request size "
+                                       f"({exchange.ohlcv_candle_limit})")
+
     @property
     def needstickers(self) -> bool:
         """
@@ -48,8 +57,18 @@ class AgeFilter(IPairList):
         """
         Short whitelist method description - used for startup-messages
         """
-        return (f"{self.name} - Filtering pairs with age less than "
+        active_age_filters = []
+        if self._min_days_listed != 0:
+            active_age_filters.append(f"{self.name} less than "
                 f"{self._min_days_listed} {plural(self._min_days_listed, 'day')}.")
+        if self._max_days_listed != 0:
+            active_age_filters.append(f"{self.name} more than "
+                f"{self._max_days_listed} {plural(self._max_days_listed, 'day')}.")
+        
+        if (len(active_age_filters)):
+            return f"{self.name} - Filtering pairs with age {active_age_filters}."
+
+        return f"{self.name} - No age filters configured."
 
     def filter_pairlist(self, pairlist: List[str], tickers: Dict) -> List[str]:
         """
@@ -61,20 +80,28 @@ class AgeFilter(IPairList):
         if not needed_pairs:
             return pairlist
 
-        since_ms = int(arrow.utcnow()
+        min_day_since_ms = int(arrow.utcnow()
                        .floor('day')
                        .shift(days=-self._min_days_listed - 1)
                        .float_timestamp) * 1000
-        candles = self._exchange.refresh_latest_ohlcv(needed_pairs, since_ms=since_ms, cache=False)
+        min_day_candles = self._exchange.refresh_latest_ohlcv(needed_pairs, since_ms=min_day_since_ms, cache=False)
+
+        max_day_since_ms = int(arrow.utcnow()
+                       .floor('day')
+                       .shift(days=-self._max_days_listed - 1)
+                       .float_timestamp) * 1000
+        max_day_candles = self._exchange.refresh_latest_ohlcv(needed_pairs, since_ms=max_day_since_ms, cache=False)
         if self._enabled:
             for p in deepcopy(pairlist):
-                daily_candles = candles[(p, '1d')] if (p, '1d') in candles else None
-                if not self._validate_pair_loc(p, daily_candles):
+                min_daily_candles = min_day_candles[(p, '1d')] if (p, '1d') in min_day_candles else None
+                max_daily_candles = max_day_candles[(p, '1d')] if (p, '1d') in max_day_candles else None
+                if not self._validate_pair_loc(p, min_daily_candles, max_daily_candles):
                     pairlist.remove(p)
         logger.info(f"Validated {len(pairlist)} pairs.")
         return pairlist
 
-    def _validate_pair_loc(self, pair: str, daily_candles: Optional[DataFrame]) -> bool:
+    def _validate_pair_loc(self, pair: str, min_daily_candles: Optional[DataFrame],
+                                    max_daily_candles: Optional[DataFrame]) -> bool:
         """
         Validate age for the ticker
         :param pair: Pair that's currently validated
@@ -85,15 +112,20 @@ class AgeFilter(IPairList):
         if pair in self._symbolsChecked:
             return True
 
-        if daily_candles is not None:
-            if len(daily_candles) > self._min_days_listed:
+        if min_daily_candles is not None and max_daily_candles is not None:
+            if len(min_daily_candles) > self._min_days_listed and len(max_daily_candles) < self._max_days_listed:
                 # We have fetched at least the minimum required number of daily candles
                 # Add to cache, store the time we last checked this symbol
                 self._symbolsChecked[pair] = int(arrow.utcnow().float_timestamp) * 1000
                 return True
-            else:
+            if len(min_daily_candles) < self._min_days_listed:
                 self.log_once(f"Removed {pair} from whitelist, because age "
-                              f"{len(daily_candles)} is less than {self._min_days_listed} "
+                              f"{len(min_daily_candles)} is less than {self._min_days_listed} "
                               f"{plural(self._min_days_listed, 'day')}", logger.info)
                 return False
+            if len(max_daily_candles) > self._max_days_listed:
+                self.log_once(f"Removed {pair} from whitelist, because age "
+                            f"{len(max_daily_candles)} is more than {self._max_days_listed} "
+                            f"{plural(self._max_days_listed, 'day')}", logger.info)
+            return False
         return False

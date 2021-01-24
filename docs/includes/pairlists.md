@@ -86,6 +86,12 @@ be caught out buying before the pair has finished dropping in price.
 
 This filter allows freqtrade to ignore pairs until they have been listed for at least `min_days_listed` days.
 
+
+On the other hands, newly listed pairs often have better performance than older pairs. 
+Now you can filter only newly listed pairs using `max_days_listed` days (defaults to `300`).
+
+This allows freqtrade to ignore pairs if they have been listed on the exchange for more than `min_days_listed` days. 
+
 #### PerformanceFilter
 
 Sorts pairs by past trade performance, as follows:

@@ -652,7 +652,7 @@ def test_agefilter_caching(mocker, markets, whitelist_conf_agefilter, tickers, o
     freqtrade.pairlists.refresh_pairlist()
     assert len(freqtrade.pairlists.whitelist) == 3
     # Called once for XRP/BTC
-    assert freqtrade.exchange.refresh_latest_ohlcv.call_count == previous_call_count + 1
+    assert freqtrade.exchange.refresh_latest_ohlcv.call_count == previous_call_count + 2
 
 
 def test_rangestabilityfilter_checks(mocker, default_conf, markets, tickers):
